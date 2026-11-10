@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.DS_Store
+.env
+*.pem
+id_ed25519*

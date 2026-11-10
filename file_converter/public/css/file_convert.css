@@ -1,0 +1,96 @@
+.fc-hint {
+	display: none;
+	position: fixed;
+	top: 70px;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 1999;
+	padding: 10px 22px;
+	border-radius: 999px;
+	background: var(--primary, #2490ef);
+	color: #fff;
+	font-weight: 600;
+	box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+	pointer-events: none;
+}
+
+.fc-hint.fc-hint-idle {
+	background: var(--gray-700, #444);
+	font-weight: 500;
+	font-size: 13px;
+}
+
+/* ---------- donut ---------- */
+.fc-donut {
+	position: fixed;
+	z-index: 2000;
+	width: 260px;
+	height: 260px;
+	filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.3));
+	animation: fc-pop 0.14s ease-out;
+	user-select: none;
+}
+
+@keyframes fc-pop {
+	from {
+		transform: scale(0.6);
+		opacity: 0;
+	}
+	to {
+		transform: scale(1);
+		opacity: 1;
+	}
+}
+
+.fc-donut svg {
+	display: block;
+}
+
+.fc-seg {
+	cursor: pointer;
+}
+
+.fc-seg path {
+	fill: hsl(var(--fc-h) 62% 46%);
+	stroke: rgba(255, 255, 255, 0.25);
+	stroke-width: 1;
+	transition: fill 0.1s, filter 0.1s;
+}
+
+.fc-seg text {
+	fill: #fff;
+	font-size: 14px;
+	font-weight: 700;
+	text-anchor: middle;
+	dominant-baseline: central;
+	pointer-events: none;
+}
+
+.fc-seg:hover path,
+.fc-seg.active path {
+	fill: hsl(var(--fc-h) 70% 38%);
+	filter: brightness(1.25);
+	stroke: #fff;
+	stroke-width: 2;
+}
+
+.fc-hole {
+	fill: var(--card-bg, #fff);
+	stroke: var(--border-color, #d1d8dd);
+	pointer-events: none;
+}
+
+.fc-center {
+	fill: var(--text-color, #1f272e);
+	font-size: 12px;
+	font-weight: 600;
+	text-anchor: middle;
+	dominant-baseline: central;
+	pointer-events: none;
+}
+
+.fc-center-sub {
+	font-size: 11px;
+	font-weight: 500;
+	fill: var(--text-muted, #6c7680);
+}
