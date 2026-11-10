@@ -457,10 +457,9 @@
 		openClickDonut([{ name: att.file_name }], x, y, { id: att.name, file_name: att.file_name });
 	}
 
-	function decorateAttachments(frm) {
-		const root = frm.sidebar && frm.sidebar.sidebar && frm.sidebar.sidebar[0];
-		if (!root) return;
-		root.querySelectorAll(".attachment-row").forEach((row) => {
+	function decorateAttachments() {
+		if (!onForm()) return;
+		document.querySelectorAll(".attachment-row").forEach((row) => {
 			if (row.querySelector(".fc-attach-btn")) return;
 			const lock = row.querySelector('a[href^="/app/file/"]');
 			if (!lock) return;
@@ -473,29 +472,24 @@
 			btn.addEventListener("click", (ev) => {
 				ev.preventDefault();
 				ev.stopPropagation();
-				convertAttachmentClick(frm, id, ev.clientX, ev.clientY);
+				convertAttachmentClick(window.cur_frm, id, ev.clientX, ev.clientY);
 			});
 			lock.insertAdjacentElement("afterend", btn);
 		});
 	}
 
-	function watchAttachments(frm) {
-		const root = frm.sidebar && frm.sidebar.sidebar && frm.sidebar.sidebar[0];
-		if (!root) return;
-		if (!frm.__fc_obs) {
-			let queued = false;
-			frm.__fc_obs = new MutationObserver(() => {
-				if (queued) return;
-				queued = true;
-				requestAnimationFrame(() => {
-					queued = false;
-					decorateAttachments(frm);
-				});
-			});
-			frm.__fc_obs.observe(root, { childList: true, subtree: true });
-		}
-		decorateAttachments(frm);
-	}
+	/* Frappe rebuilds the attachment list (and sometimes the whole sidebar) after
+	 * add/remove/reload, so watch the whole page instead of one sidebar node.
+	 * decorateAttachments is idempotent, so its own edits cause no loop. */
+	let decoQueued = false;
+	new MutationObserver(() => {
+		if (decoQueued) return;
+		decoQueued = true;
+		setTimeout(() => {
+			decoQueued = false;
+			decorateAttachments();
+		}, 60);
+	}).observe(document.body, { childList: true, subtree: true });
 
 	/* ---------- menu item fallback on every form ---------- */
 	function pickFiles() {
@@ -512,7 +506,7 @@
 	}
 
 	$(document).on("form-refresh", function (e, frm) {
-		if (frm) watchAttachments(frm);
+		decorateAttachments();
 		if (!frm || frm.__fc_menu || !frm.page || !frm.page.add_menu_item) return;
 		frm.__fc_menu = true;
 		frm.page.add_menu_item(__("Convert File..."), pickFiles);
