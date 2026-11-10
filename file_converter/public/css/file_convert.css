@@ -25,7 +25,6 @@
 	position: fixed;
 	z-index: 2000;
 	width: 260px;
-	height: 260px;
 	filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.3));
 	animation: fc-pop 0.14s ease-out;
 	user-select: none;
@@ -44,6 +43,40 @@
 
 .fc-donut svg {
 	display: block;
+}
+
+.fc-replace {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	margin: 6px auto 0;
+	padding: 4px 12px;
+	width: fit-content;
+	border-radius: 999px;
+	background: var(--card-bg, #fff);
+	color: var(--text-color, #1f272e);
+	border: 1px solid var(--border-color, #d1d8dd);
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.fc-replace input {
+	margin: 0;
+}
+
+.fc-attach-btn {
+	margin-left: 6px;
+	font-size: 14px;
+	line-height: 1;
+	text-decoration: none;
+	color: var(--text-muted, #6c7680);
+	cursor: pointer;
+}
+
+.fc-attach-btn:hover {
+	color: var(--primary, #2490ef);
+	text-decoration: none;
 }
 
 .fc-seg {

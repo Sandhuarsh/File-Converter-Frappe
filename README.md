@@ -34,6 +34,19 @@ bench --site <site> clear-cache
 # restart this bench's web process (supervisor) so the new module is importable
 ```
 
+HEIC (iPhone photos) needs `pillow-heif`. On an existing bench install it without letting pip
+upgrade Pillow or other Frappe pins:
+
+```bash
+~/frappe-bench/env/bin/pip install --no-deps "pillow-heif==0.21.0"
+```
+
+## Attachments
+
+Every attachment in a form's sidebar gets a small convert button. It opens the same donut;
+tick **Replace original** to delete the source file after the converted one is saved
+(needs delete permission on the File; the new file is always saved first).
+
 Optional engines (server-wide, need sudo):
 
 ```bash

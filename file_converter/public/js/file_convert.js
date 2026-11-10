@@ -154,8 +154,9 @@
 	function placeDonut(el, x, y) {
 		document.body.appendChild(el);
 		const half = SIZE / 2;
+		const h = el.offsetHeight || SIZE;
 		el.style.left = Math.max(4, Math.min(x - half, window.innerWidth - SIZE - 4)) + "px";
-		el.style.top = Math.max(4, Math.min(y - half, window.innerHeight - SIZE - 4)) + "px";
+		el.style.top = Math.max(4, Math.min(y - half, window.innerHeight - h - 4)) + "px";
 	}
 
 	function closeDonut() {
@@ -208,7 +209,24 @@
 	}
 
 	/* Click mode: opened after a drop outside a segment, or from the menu. */
-	async function openClickDonut(files, x, y) {
+	const REPLACE_KEY = "file_converter_replace_original";
+	const getReplacePref = () => {
+		try {
+			return localStorage.getItem(REPLACE_KEY) === "1";
+		} catch (e) {
+			return false;
+		}
+	};
+	const setReplacePref = (v) => {
+		try {
+			localStorage.setItem(REPLACE_KEY, v ? "1" : "0");
+		} catch (e) {
+			/* ignore */
+		}
+	};
+
+	/* `attachment` ({id, file_name}) is set when converting an existing attachment. */
+	async function openClickDonut(files, x, y, attachment) {
 		closeDonut();
 		if (!files.length) return;
 		let targets = [];
@@ -226,13 +244,24 @@
 		const label = files.length === 1 ? files[0].name : __("{0} files", [files.length]);
 		const el = buildDonut(targets, label, "click");
 		donut = { el, mode: "click" };
+		if (attachment) {
+			const label = document.createElement("label");
+			label.className = "fc-replace";
+			label.innerHTML = `<input type="checkbox"> ${__("Replace original")}`;
+			const box = label.querySelector("input");
+			box.checked = getReplacePref();
+			box.addEventListener("change", () => setReplacePref(box.checked));
+			el.appendChild(label);
+		}
 		placeDonut(el, x, y);
 		el.addEventListener("click", (ev) => {
 			const seg = ev.target.closest(".fc-seg");
 			if (!seg) return;
 			const t = seg.dataset.t;
+			const replace = attachment && el.querySelector(".fc-replace input").checked;
 			closeDonut();
-			runConversions(files, t);
+			if (attachment) runAttachmentConversion(attachment, t, replace);
+			else runConversions(files, t);
 		});
 		document.addEventListener("keydown", onKey, true);
 		document.addEventListener("mousedown", onOutside, true);
@@ -388,6 +417,86 @@
 		if (html) frappe.msgprint({ title: __("File Converter"), message: html });
 	}
 
+	/* ---------- convert an existing attachment ---------- */
+	async function runAttachmentConversion(att, target, replace) {
+		const frm = window.cur_frm;
+		frappe.show_progress(__("Converting to .{0}", [target]), 0, 1, esc(att.file_name), true);
+		try {
+			const r = await frappe.xcall(API + "convert_attachment", {
+				file: att.id,
+				target: target,
+				replace: replace ? 1 : 0,
+			});
+			frappe.hide_progress();
+			frappe.show_alert(
+				{
+					message: r.replaced
+						? __("Converted. Original attachment replaced.")
+						: __("Converted file attached."),
+					indicator: "green",
+				},
+				7
+			);
+			if (!frm.is_new()) frm.reload_doc();
+			if (!r.attached) {
+				frappe.msgprint({
+					title: __("File Converter"),
+					message: `<a href="${esc(r.file_url)}" target="_blank">${esc(r.file_name)}</a>`,
+				});
+			}
+		} catch (err) {
+			frappe.hide_progress(); // the server message is shown by frappe.xcall
+		}
+	}
+
+	function convertAttachmentClick(frm, id, x, y) {
+		const att = ((frm.attachments && frm.attachments.get_attachments()) || []).find(
+			(a) => a.name === id
+		);
+		if (!att || !att.file_name) return;
+		openClickDonut([{ name: att.file_name }], x, y, { id: att.name, file_name: att.file_name });
+	}
+
+	function decorateAttachments(frm) {
+		const root = frm.sidebar && frm.sidebar.sidebar && frm.sidebar.sidebar[0];
+		if (!root) return;
+		root.querySelectorAll(".attachment-row").forEach((row) => {
+			if (row.querySelector(".fc-attach-btn")) return;
+			const lock = row.querySelector('a[href^="/app/file/"]');
+			if (!lock) return;
+			const id = decodeURIComponent(lock.getAttribute("href").split("/app/file/")[1] || "");
+			const btn = document.createElement("a");
+			btn.className = "fc-attach-btn";
+			btn.href = "#";
+			btn.title = __("Convert this file");
+			btn.textContent = "⇄";
+			btn.addEventListener("click", (ev) => {
+				ev.preventDefault();
+				ev.stopPropagation();
+				convertAttachmentClick(frm, id, ev.clientX, ev.clientY);
+			});
+			lock.insertAdjacentElement("afterend", btn);
+		});
+	}
+
+	function watchAttachments(frm) {
+		const root = frm.sidebar && frm.sidebar.sidebar && frm.sidebar.sidebar[0];
+		if (!root) return;
+		if (!frm.__fc_obs) {
+			let queued = false;
+			frm.__fc_obs = new MutationObserver(() => {
+				if (queued) return;
+				queued = true;
+				requestAnimationFrame(() => {
+					queued = false;
+					decorateAttachments(frm);
+				});
+			});
+			frm.__fc_obs.observe(root, { childList: true, subtree: true });
+		}
+		decorateAttachments(frm);
+	}
+
 	/* ---------- menu item fallback on every form ---------- */
 	function pickFiles() {
 		const input = document.createElement("input");
@@ -403,6 +512,7 @@
 	}
 
 	$(document).on("form-refresh", function (e, frm) {
+		if (frm) watchAttachments(frm);
 		if (!frm || frm.__fc_menu || !frm.page || !frm.page.add_menu_item) return;
 		frm.__fc_menu = true;
 		frm.page.add_menu_item(__("Convert File..."), pickFiles);

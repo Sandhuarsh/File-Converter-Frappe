@@ -534,21 +534,12 @@ def get_targets(ext=None):
 	return _targets_for(ext)
 
 
-@frappe.whitelist(methods=["POST"])
-def convert(target=None, doctype=None, docname=None):
-	"""Convert the uploaded file (multipart field ``file``) to ``target``.
+def _produce(original_name, target, save_input):
+	"""Run one conversion. ``save_input(path)`` must write the source bytes.
 
-	If ``doctype``/``docname`` point to a document the user can write to, the
-	result is attached to it. Otherwise it is saved as a private, unattached
-	File owned by the user.
+	Returns ``(output_file_name, content_bytes)``.
 	"""
-	_require_login()
-
-	upload = frappe.request.files.get("file") if frappe.request else None
-	if not upload or not upload.filename:
-		frappe.throw(_("No file received"))
-
-	original = os.path.basename(upload.filename)
+	original = os.path.basename(original_name)
 	stem, dot_ext = os.path.splitext(original)
 	src = _norm(dot_ext)
 	target = _norm(target)
@@ -563,7 +554,7 @@ def convert(target=None, doctype=None, docname=None):
 
 	with tempfile.TemporaryDirectory(prefix="fconv_") as tmp:
 		in_path = os.path.join(tmp, "input." + src)
-		upload.save(in_path)
+		save_input(in_path)
 		if os.path.getsize(in_path) > max_mb * 1024 * 1024:
 			frappe.throw(_("File is larger than the {0} MB limit for this type").format(max_mb))
 
@@ -581,14 +572,11 @@ def convert(target=None, doctype=None, docname=None):
 			content = fh.read()
 
 	safe_stem = re.sub(r"[^\w\-. ]", "_", stem).strip() or "converted"
-	out_name = f"{safe_stem}.{target}"
+	return f"{safe_stem}.{target}", content
 
-	attach_dt = attach_dn = None
-	if doctype and docname and frappe.db.exists(doctype, docname):
-		if frappe.has_permission(doctype, "write", docname):
-			attach_dt, attach_dn = doctype, docname
 
-	file_doc = frappe.get_doc(
+def _insert_file(out_name, content, attach_dt, attach_dn):
+	return frappe.get_doc(
 		{
 			"doctype": "File",
 			"file_name": out_name,
@@ -599,8 +587,80 @@ def convert(target=None, doctype=None, docname=None):
 		}
 	).insert()
 
+
+@frappe.whitelist(methods=["POST"])
+def convert(target=None, doctype=None, docname=None):
+	"""Convert the uploaded file (multipart field ``file``) to ``target``.
+
+	If ``doctype``/``docname`` point to a document the user can write to, the
+	result is attached to it. Otherwise it is saved as a private, unattached
+	File owned by the user.
+	"""
+	_require_login()
+
+	upload = frappe.request.files.get("file") if frappe.request else None
+	if not upload or not upload.filename:
+		frappe.throw(_("No file received"))
+
+	out_name, content = _produce(upload.filename, target, upload.save)
+
+	attach_dt = attach_dn = None
+	if doctype and docname and frappe.db.exists(doctype, docname):
+		if frappe.has_permission(doctype, "write", docname):
+			attach_dt, attach_dn = doctype, docname
+
+	file_doc = _insert_file(out_name, content, attach_dt, attach_dn)
 	return {
 		"file_url": file_doc.file_url,
 		"file_name": file_doc.file_name,
 		"attached": bool(attach_dn),
+	}
+
+
+@frappe.whitelist(methods=["POST"])
+def convert_attachment(file=None, target=None, replace=0):
+	"""Convert a file that is already attached to a document.
+
+	``file`` is the File doc name. The result is attached to the same document
+	(if the user can write to it). With ``replace`` the original File is deleted
+	afterwards, but only if the user is allowed to delete it; the new file is
+	always saved first so a failure never loses the original.
+	"""
+	_require_login()
+	if not file:
+		frappe.throw(_("No attachment given"))
+
+	file_doc = frappe.get_doc("File", file)
+	file_doc.check_permission("read")
+	if file_doc.is_folder:
+		frappe.throw(_("Folders cannot be converted"))
+
+	def save_input(path):
+		try:
+			data = file_doc.get_content()
+		except Exception:
+			frappe.throw(_("Could not read the attachment"))
+		if isinstance(data, str):
+			data = data.encode("utf-8")
+		with open(path, "wb") as fh:
+			fh.write(data)
+
+	out_name, content = _produce(file_doc.file_name or "", target, save_input)
+
+	attach_dt, attach_dn = file_doc.attached_to_doctype, file_doc.attached_to_name
+	if not (attach_dt and attach_dn and frappe.has_permission(attach_dt, "write", attach_dn)):
+		attach_dt = attach_dn = None
+
+	new_doc = _insert_file(out_name, content, attach_dt, attach_dn)
+
+	replaced = False
+	if cint(replace) and attach_dn and file_doc.has_permission("delete"):
+		frappe.delete_doc("File", file_doc.name)
+		replaced = True
+
+	return {
+		"file_url": new_doc.file_url,
+		"file_name": new_doc.file_name,
+		"attached": bool(attach_dn),
+		"replaced": replaced,
 	}
