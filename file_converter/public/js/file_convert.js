@@ -544,25 +544,160 @@
 		openClickDonut([{ name: att.file_name }], x, y, { id: att.name, file_name: att.file_name });
 	}
 
+	/* ---------- merge several existing attachments ---------- */
+	const MERGE_REPLACE_KEY = "file_converter_merge_replace";
+	let selected = []; // File ids, in the order they were ticked
+	let selectedDoc = null;
+
+	const attachmentNames = (frm) => {
+		const m = {};
+		((frm.attachments && frm.attachments.get_attachments()) || []).forEach((a) => {
+			m[a.name] = a.file_name || "";
+		});
+		return m;
+	};
+	const mergeable = (name) => MERGE_EXTS.has(getExt(name));
+
+	function toggleSelected(id, on) {
+		selected = selected.filter((x) => x !== id);
+		if (on) selected.push(id);
+		decorateAttachments();
+	}
+
+	async function runMergeAttachments(replace) {
+		const frm = window.cur_frm;
+		const ids = selected.slice();
+		if (ids.length < 2 || !frm) return;
+		if (!(await mergeAvailable())) {
+			frappe.msgprint(__("PDF merging is not available on this server."));
+			return;
+		}
+		frappe.show_progress(__("Merging {0} attachments into one PDF", [ids.length]), 0, 1, "", true);
+		try {
+			const r = await frappe.xcall(API + "merge_attachments", {
+				files: JSON.stringify(ids),
+				doctype: frm.doctype,
+				docname: frm.docname,
+				replace: replace ? 1 : 0,
+			});
+			frappe.hide_progress();
+			selected = [];
+			frappe.show_alert(
+				{
+					message: r.deleted
+						? __("Merged {0} files into one PDF. Originals removed.", [r.files])
+						: __("Merged {0} files into one PDF.", [r.files]),
+					indicator: "green",
+				},
+				7
+			);
+			if (!frm.is_new()) frm.reload_doc();
+			if (!r.attached) {
+				frappe.msgprint({
+					title: __("File Converter"),
+					message: `<a href="${esc(r.file_url)}" target="_blank">${esc(r.file_name)}</a>`,
+				});
+			}
+		} catch (err) {
+			frappe.hide_progress(); // the server message is shown by frappe.xcall
+		}
+	}
+
+	function refreshMergeBar(frm, rows) {
+		let bar = document.querySelector(".fc-merge-bar");
+		const last = rows[rows.length - 1];
+		if (rows.length < 2 || !last) {
+			if (bar) bar.remove();
+			return;
+		}
+		if (!bar) {
+			bar = document.createElement("li");
+			bar.className = "fc-merge-bar";
+			bar.innerHTML =
+				`<div class="fc-merge-title"></div>` +
+				`<div class="fc-merge-order"></div>` +
+				`<label class="fc-merge-replace"><input type="checkbox"> ${__("Replace originals")}</label>` +
+				`<button type="button" class="btn btn-xs btn-primary fc-merge-go">${__("Merge to 1 PDF")}</button>`;
+			const box = bar.querySelector("input");
+			try {
+				box.checked = localStorage.getItem(MERGE_REPLACE_KEY) === "1";
+			} catch (e) {
+				/* ignore */
+			}
+			box.addEventListener("change", () => {
+				try {
+					localStorage.setItem(MERGE_REPLACE_KEY, box.checked ? "1" : "0");
+				} catch (e) {
+					/* ignore */
+				}
+			});
+			bar.querySelector(".fc-merge-go").addEventListener("click", (ev) => {
+				ev.preventDefault();
+				runMergeAttachments(box.checked);
+			});
+		}
+		if (bar.previousElementSibling !== last) last.after(bar);
+
+		const names = attachmentNames(frm);
+		const show = selected.length >= 2;
+		const title = show
+			? __("{0} files selected", [selected.length])
+			: __("Tick 2 or more files (images / PDFs) to merge them");
+		const order = show ? selected.map((id, i) => `${i + 1}. ${names[id] || id}`).join("  →  ") : "";
+		const set = (sel, text) => {
+			const el = bar.querySelector(sel);
+			if (el.textContent !== text) el.textContent = text;
+		};
+		set(".fc-merge-title", title);
+		set(".fc-merge-order", order);
+		bar.querySelector(".fc-merge-order").title = order;
+		bar.classList.toggle("fc-merge-ready", show);
+	}
+
 	function decorateAttachments() {
 		if (!onForm()) return;
-		document.querySelectorAll(".attachment-row").forEach((row) => {
-			if (row.querySelector(".fc-attach-btn")) return;
+		const frm = window.cur_frm;
+		if (selectedDoc !== frm.docname) {
+			selected = [];
+			selectedDoc = frm.docname;
+		}
+		const names = attachmentNames(frm);
+		const rows = Array.from(document.querySelectorAll(".attachment-row"));
+		rows.forEach((row) => {
 			const lock = row.querySelector('a[href^="/app/file/"]');
 			if (!lock) return;
 			const id = decodeURIComponent(lock.getAttribute("href").split("/app/file/")[1] || "");
-			const btn = document.createElement("a");
-			btn.className = "fc-attach-btn";
-			btn.href = "#";
-			btn.title = __("Convert this file");
-			btn.textContent = "⇄";
-			btn.addEventListener("click", (ev) => {
-				ev.preventDefault();
-				ev.stopPropagation();
-				convertAttachmentClick(window.cur_frm, id, ev.clientX, ev.clientY);
-			});
-			lock.insertAdjacentElement("afterend", btn);
+			row.dataset.fcId = id;
+
+			if (!row.querySelector(".fc-attach-btn")) {
+				const btn = document.createElement("a");
+				btn.className = "fc-attach-btn";
+				btn.href = "#";
+				btn.title = __("Convert this file");
+				btn.textContent = "⇄";
+				btn.addEventListener("click", (ev) => {
+					ev.preventDefault();
+					ev.stopPropagation();
+					convertAttachmentClick(window.cur_frm, id, ev.clientX, ev.clientY);
+				});
+				lock.insertAdjacentElement("afterend", btn);
+			}
+
+			let chk = row.querySelector(".fc-attach-check");
+			if (!chk && rows.length >= 2 && mergeable(names[id])) {
+				chk = document.createElement("input");
+				chk.type = "checkbox";
+				chk.className = "fc-attach-check";
+				chk.title = __("Select to merge into one PDF");
+				chk.addEventListener("click", (ev) => ev.stopPropagation());
+				chk.addEventListener("change", () => toggleSelected(id, chk.checked));
+				lock.insertAdjacentElement("beforebegin", chk);
+			}
+			if (chk && rows.length < 2) chk.remove();
+			else if (chk) chk.checked = selected.includes(id);
 		});
+		selected = selected.filter((id) => rows.some((r) => r.dataset.fcId === id));
+		refreshMergeBar(frm, rows);
 	}
 
 	/* Frappe rebuilds the attachment list (and sometimes the whole sidebar) after

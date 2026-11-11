@@ -746,33 +746,31 @@ def merge_available():
 	return _pymupdf()
 
 
-@frappe.whitelist(methods=["POST"])
-def merge_pdf(doctype=None, docname=None):
-	"""Merge the uploaded images/PDFs (multipart field ``files``, in order)
-	into a single PDF and attach it like :func:`convert` does."""
-	_require_login()
+def _merge_sources(sources):
+	"""Merge ``sources`` [(display_name, save_fn(path)), ...] in order.
+
+	Applies the count, size and type limits. Returns ``(out_name, content, count)``.
+	"""
 	if not _pymupdf():
 		frappe.throw(_("PDF merging is not available on this server"))
-
-	uploads = [u for u in (frappe.request.files.getlist("files") if frappe.request else []) if u and u.filename]
-	if len(uploads) < 2:
+	if len(sources) < 2:
 		frappe.throw(_("Select at least two files to merge"))
-	if len(uploads) > MAX_MERGE_FILES:
+	if len(sources) > MAX_MERGE_FILES:
 		frappe.throw(_("You can merge up to {0} files at once").format(MAX_MERGE_FILES))
 
 	max_mb = cint(frappe.conf.get("file_converter_max_mb")) or DEFAULT_MAX_MB
 
 	with tempfile.TemporaryDirectory(prefix="fmerge_") as tmp:
 		items, total = [], 0
-		for i, upload in enumerate(uploads):
-			name = os.path.basename(upload.filename)
+		for i, (display_name, save) in enumerate(sources):
+			name = os.path.basename(display_name or "") or f"file_{i + 1}"
 			stem_ext = _norm(os.path.splitext(name)[1])
 			if stem_ext not in MERGE_SRC:
 				frappe.throw(_("{0}: only images and PDFs can be merged").format(name))
 			if stem_ext == "heic" and not _heif():
 				frappe.throw(_("{0}: HEIC is not supported on this server").format(name))
 			path = os.path.join(tmp, f"in_{i}.{stem_ext}")
-			upload.save(path)
+			save(path)
 			size = os.path.getsize(path)
 			if size > max_mb * 1024 * 1024:
 				frappe.throw(_("{0} is larger than the {1} MB limit").format(name, max_mb))
@@ -793,17 +791,86 @@ def merge_pdf(doctype=None, docname=None):
 			content = fh.read()
 
 	first_stem = re.sub(r"[^\w\-. ]", "_", os.path.splitext(items[0][0])[0]).strip() or "files"
-	out_name = f"merged_{first_stem}.pdf"
+	return f"merged_{first_stem}.pdf", content, len(items)
 
-	attach_dt = attach_dn = None
+
+def _attach_target(doctype, docname):
+	"""(doctype, docname) if the user may attach to that document, else (None, None)."""
 	if doctype and docname and frappe.db.exists(doctype, docname):
 		if frappe.has_permission(doctype, "write", docname):
-			attach_dt, attach_dn = doctype, docname
+			return doctype, docname
+	return None, None
 
+
+@frappe.whitelist(methods=["POST"])
+def merge_pdf(doctype=None, docname=None):
+	"""Merge the uploaded images/PDFs (multipart field ``files``, in order)
+	into a single PDF and attach it like :func:`convert` does."""
+	_require_login()
+	uploads = [u for u in (frappe.request.files.getlist("files") if frappe.request else []) if u and u.filename]
+	out_name, content, count = _merge_sources([(u.filename, u.save) for u in uploads])
+
+	attach_dt, attach_dn = _attach_target(doctype, docname)
 	file_doc = _insert_file(out_name, content, attach_dt, attach_dn)
 	return {
 		"file_url": file_doc.file_url,
 		"file_name": file_doc.file_name,
 		"attached": bool(attach_dn),
-		"files": len(items),
+		"files": count,
+	}
+
+
+@frappe.whitelist(methods=["POST"])
+def merge_attachments(files=None, doctype=None, docname=None, replace=0):
+	"""Merge existing attachments (File doc names, in the order given) into one PDF.
+
+	The merged PDF is saved first. With ``replace`` the source files are then
+	deleted, but only those the user is allowed to delete.
+	"""
+	_require_login()
+	names = frappe.parse_json(files) if isinstance(files, str) else (files or [])
+	if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+		frappe.throw(_("Invalid file list"))
+	if len(set(names)) != len(names):
+		frappe.throw(_("The same file was selected twice"))
+
+	docs = []
+	for name in names:
+		fd = frappe.get_doc("File", name)
+		fd.check_permission("read")
+		if fd.is_folder:
+			frappe.throw(_("Folders cannot be merged"))
+		docs.append(fd)
+
+	def saver(fd):
+		def save(path):
+			try:
+				data = fd.get_content()
+			except Exception:
+				frappe.throw(_("Could not read {0}").format(fd.file_name))
+			if isinstance(data, str):
+				data = data.encode("utf-8")
+			with open(path, "wb") as fh:
+				fh.write(data)
+
+		return save
+
+	out_name, content, count = _merge_sources([(fd.file_name, saver(fd)) for fd in docs])
+
+	attach_dt, attach_dn = _attach_target(doctype, docname)
+	file_doc = _insert_file(out_name, content, attach_dt, attach_dn)
+
+	deleted = 0
+	if cint(replace) and attach_dn:
+		for fd in docs:
+			if fd.has_permission("delete"):
+				frappe.delete_doc("File", fd.name)
+				deleted += 1
+
+	return {
+		"file_url": file_doc.file_url,
+		"file_name": file_doc.file_name,
+		"attached": bool(attach_dn),
+		"files": count,
+		"deleted": deleted,
 	}

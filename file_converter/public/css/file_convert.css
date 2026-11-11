@@ -74,6 +74,55 @@
 	cursor: pointer;
 }
 
+.fc-attach-check {
+	margin: 0 6px 0 0;
+	cursor: pointer;
+}
+
+.fc-merge-bar {
+	list-style: none;
+	margin: 6px 0 2px;
+	padding: 8px 10px;
+	border: 1px dashed var(--border-color, #d1d8dd);
+	border-radius: 8px;
+	font-size: 12px;
+	color: var(--text-muted, #6c7680);
+}
+
+.fc-merge-bar.fc-merge-ready {
+	border-style: solid;
+	border-color: hsl(150 60% 40%);
+	color: var(--text-color, #1f272e);
+}
+
+.fc-merge-order {
+	margin: 4px 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11px;
+}
+
+.fc-merge-replace {
+	display: none;
+	align-items: center;
+	gap: 6px;
+	margin: 4px 0 6px;
+	cursor: pointer;
+}
+
+.fc-merge-go {
+	display: none;
+}
+
+.fc-merge-bar.fc-merge-ready .fc-merge-replace {
+	display: flex;
+}
+
+.fc-merge-bar.fc-merge-ready .fc-merge-go {
+	display: inline-block;
+}
+
 .fc-attach-btn:hover {
 	color: var(--primary, #2490ef);
 	text-decoration: none;
