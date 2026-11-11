@@ -411,7 +411,34 @@ def _convert_text(src, target, in_path, out_dir, tmp):
 	frappe.throw(_("Unsupported text conversion"))
 
 
+# LibreOffice happily "opens" any file as plain text, so a damaged or renamed file
+# would silently become a PDF of garbage. Check the signature for formats that
+# have a fixed one. Legacy doc/xls/ppt and plain-text formats are left alone
+# (real-world .xls files are often HTML tables, .doc can be RTF).
+_ZIP_MAGIC = b"PK\x03\x04"
+_LO_MAGIC = {
+	"docx": (_ZIP_MAGIC,),
+	"xlsx": (_ZIP_MAGIC,),
+	"pptx": (_ZIP_MAGIC,),
+	"odt": (_ZIP_MAGIC,),
+	"ods": (_ZIP_MAGIC,),
+	"odp": (_ZIP_MAGIC,),
+	"rtf": (b"{\\rtf",),
+}
+
+
+def _check_office_signature(src, in_path):
+	expected = _LO_MAGIC.get(src)
+	if not expected:
+		return
+	with open(in_path, "rb") as fh:
+		head = fh.read(8)
+	if not any(head.startswith(m) for m in expected):
+		frappe.throw(_("This file is not a valid .{0} document. It may be damaged or have the wrong extension.").format(src))
+
+
 def _convert_libreoffice(src, target, in_path, out_dir, tmp):
+	_check_office_signature(src, in_path)
 	profile = os.path.join(tmp, "lo_profile")
 	os.makedirs(profile, exist_ok=True)
 	_exec(
