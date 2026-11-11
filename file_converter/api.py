@@ -664,3 +664,146 @@ def convert_attachment(file=None, target=None, replace=0):
 		"attached": bool(attach_dn),
 		"replaced": replaced,
 	}
+
+
+# --------------------------------------------------------------------------
+# merge several images / PDFs into one PDF
+# --------------------------------------------------------------------------
+
+MERGE_SRC = {"pdf", "jpg", "png", "webp", "bmp", "gif", "tiff", "heic"}
+MAX_MERGE_FILES = 30
+MAX_MERGE_TOTAL_MB = 100
+MAX_MERGE_PAGES = 300
+A4 = (595, 842)  # points
+PAGE_MARGIN = 18
+IMAGE_MAX_PX = 2600  # longest side; keeps photo PDFs small
+
+
+def _fitz():
+	try:
+		import pymupdf as fitz
+	except Exception:
+		import fitz
+	return fitz
+
+
+def _merge_to_pdf(items, tmp):
+	"""Combine ``items`` [(display_name, ext, path), ...] in order into one PDF.
+
+	PDFs are appended page by page. Each image becomes one A4 page (portrait or
+	landscape to suit the picture), scaled to fit inside the margins. Phone
+	photos are rotated by their EXIF orientation and downscaled.
+	"""
+	from PIL import Image, ImageOps
+
+	fitz = _fitz()
+	out = fitz.open()
+	try:
+		for i, (name, ext, path) in enumerate(items):
+			if ext == "pdf":
+				src = fitz.open(path)
+				try:
+					if src.needs_pass:
+						frappe.throw(_("{0} is password protected").format(name))
+					out.insert_pdf(src)
+				finally:
+					src.close()
+			else:
+				if ext == "heic":
+					import pillow_heif
+
+					pillow_heif.register_heif_opener()
+				with Image.open(path) as opened:
+					img = ImageOps.exif_transpose(opened)
+					if img.mode in ("RGBA", "LA", "P"):
+						img = _flatten_alpha(img)
+					elif img.mode != "RGB":
+						img = img.convert("RGB")
+					img.thumbnail((IMAGE_MAX_PX, IMAGE_MAX_PX))
+					jpg = os.path.join(tmp, f"page_{i}.jpg")
+					img.save(jpg, "JPEG", quality=88)
+					landscape = img.width > img.height
+				w, h = (A4[1], A4[0]) if landscape else A4
+				page = out.new_page(width=w, height=h)
+				page.insert_image(
+					fitz.Rect(PAGE_MARGIN, PAGE_MARGIN, w - PAGE_MARGIN, h - PAGE_MARGIN), filename=jpg
+				)
+			if out.page_count > MAX_MERGE_PAGES:
+				frappe.throw(_("Too many pages (limit {0})").format(MAX_MERGE_PAGES))
+		if not out.page_count:
+			frappe.throw(_("Nothing to merge"))
+		out_path = os.path.join(tmp, "merged.pdf")
+		out.save(out_path, garbage=3, deflate=True)
+		return out_path
+	finally:
+		out.close()
+
+
+@frappe.whitelist()
+def merge_available():
+	"""Whether this server can merge files into one PDF."""
+	_require_login()
+	return _pymupdf()
+
+
+@frappe.whitelist(methods=["POST"])
+def merge_pdf(doctype=None, docname=None):
+	"""Merge the uploaded images/PDFs (multipart field ``files``, in order)
+	into a single PDF and attach it like :func:`convert` does."""
+	_require_login()
+	if not _pymupdf():
+		frappe.throw(_("PDF merging is not available on this server"))
+
+	uploads = [u for u in (frappe.request.files.getlist("files") if frappe.request else []) if u and u.filename]
+	if len(uploads) < 2:
+		frappe.throw(_("Select at least two files to merge"))
+	if len(uploads) > MAX_MERGE_FILES:
+		frappe.throw(_("You can merge up to {0} files at once").format(MAX_MERGE_FILES))
+
+	max_mb = cint(frappe.conf.get("file_converter_max_mb")) or DEFAULT_MAX_MB
+
+	with tempfile.TemporaryDirectory(prefix="fmerge_") as tmp:
+		items, total = [], 0
+		for i, upload in enumerate(uploads):
+			name = os.path.basename(upload.filename)
+			stem_ext = _norm(os.path.splitext(name)[1])
+			if stem_ext not in MERGE_SRC:
+				frappe.throw(_("{0}: only images and PDFs can be merged").format(name))
+			if stem_ext == "heic" and not _heif():
+				frappe.throw(_("{0}: HEIC is not supported on this server").format(name))
+			path = os.path.join(tmp, f"in_{i}.{stem_ext}")
+			upload.save(path)
+			size = os.path.getsize(path)
+			if size > max_mb * 1024 * 1024:
+				frappe.throw(_("{0} is larger than the {1} MB limit").format(name, max_mb))
+			total += size
+			if total > MAX_MERGE_TOTAL_MB * 1024 * 1024:
+				frappe.throw(_("Total size is over the {0} MB limit").format(MAX_MERGE_TOTAL_MB))
+			items.append((name, stem_ext, path))
+
+		try:
+			out_path = _merge_to_pdf(items, tmp)
+		except frappe.ValidationError:
+			raise
+		except Exception:
+			frappe.log_error(title="File Converter merge failure", message=frappe.get_traceback())
+			frappe.throw(_("These files could not be merged. One of them may be damaged."))
+
+		with open(out_path, "rb") as fh:
+			content = fh.read()
+
+	first_stem = re.sub(r"[^\w\-. ]", "_", os.path.splitext(items[0][0])[0]).strip() or "files"
+	out_name = f"merged_{first_stem}.pdf"
+
+	attach_dt = attach_dn = None
+	if doctype and docname and frappe.db.exists(doctype, docname):
+		if frappe.has_permission(doctype, "write", docname):
+			attach_dt, attach_dn = doctype, docname
+
+	file_doc = _insert_file(out_name, content, attach_dt, attach_dn)
+	return {
+		"file_url": file_doc.file_url,
+		"file_name": file_doc.file_name,
+		"attached": bool(attach_dn),
+		"files": len(items),
+	}

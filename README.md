@@ -64,3 +64,11 @@ sudo apt-get install -y libreoffice-writer libreoffice-calc libreoffice-impress 
 * HTML/Markdown to PDF strips scripts, iframes, and non-`data:` image sources, and runs wkhtmltopdf with local file access and JavaScript disabled.
 * Spreadsheet text starting with `=`, `+`, `-`, `@` is stored as text, not a formula.
 * Conversions run synchronously with a 180 s timeout.
+
+## Merge to one PDF
+
+Drop two or more images and/or PDFs (Ctrl + drag, or the form's **Convert File...** menu) and pick the
+green **Merge to 1 PDF** segment. Files are added in the order they were dropped. Each image becomes one
+A4 page (portrait or landscape to suit the photo, EXIF rotation applied, downscaled to keep the PDF small);
+PDFs are appended page by page. Limits: 30 files, 100 MB total, 300 pages, password-protected PDFs rejected.
+Requires PyMuPDF on the server.

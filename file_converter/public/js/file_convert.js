@@ -68,6 +68,31 @@
 		return lists.reduce((a, b) => a.filter((t) => b.includes(t))).slice(0, MAX_SEGMENTS);
 	}
 
+	/* Several images / PDFs can also be merged into one PDF. */
+	const MERGE_EXTS = new Set([
+		"pdf", "jpg", "jpeg", "png", "webp", "bmp", "gif", "tif", "tiff", "heic", "heif",
+	]);
+	let mergeOk = null;
+	async function mergeAvailable() {
+		if (mergeOk === null) {
+			try {
+				mergeOk = !!(await frappe.xcall(API + "merge_available"));
+			} catch (e) {
+				mergeOk = false;
+			}
+		}
+		return mergeOk;
+	}
+
+	/* Donut segments for these extensions (one entry per dropped file). */
+	async function donutTargets(exts) {
+		const targets = await commonTargets(exts);
+		if (exts.length >= 2 && exts.every((e) => MERGE_EXTS.has(e)) && (await mergeAvailable())) {
+			targets.unshift("merge");
+		}
+		return targets.slice(0, MAX_SEGMENTS);
+	}
+
 	function extsFromItems(items) {
 		const exts = [];
 		for (const it of Array.from(items || [])) {
@@ -132,11 +157,17 @@
 		let segs = "";
 		targets.forEach((t, i) => {
 			const [tx, ty] = n === 1 ? [C, C - mid] : pt(mid, -Math.PI / 2 + (i + 0.5) * step);
-			const hue = (210 + (i * 360) / n) % 360;
+			const isMerge = t === "merge";
+			const hue = isMerge ? 150 : (210 + (i * 360) / n) % 360;
+			const label = isMerge
+				? `<text x="${tx}" y="${ty - 8}">${__("Merge")}</text>` +
+				  `<text class="fc-sub" x="${tx}" y="${ty + 8}">${__("to 1 PDF")}</text>`
+				: `<text x="${tx}" y="${ty}">.${esc(t)}</text>`;
 			segs +=
 				`<g class="fc-seg" data-t="${esc(t)}" style="--fc-h:${hue}">` +
 				`<path d="${segmentPath(i, n)}" fill-rule="evenodd"></path>` +
-				`<text x="${tx}" y="${ty}">.${esc(t)}</text></g>`;
+				label +
+				`</g>`;
 		});
 		const short = label.length > 14 ? label.slice(0, 13) + "…" : label;
 		const wrap = document.createElement("div");
@@ -192,7 +223,7 @@
 		const my = ++token;
 		let targets = [];
 		try {
-			targets = await commonTargets(exts);
+			targets = await donutTargets(exts);
 		} catch (err) {
 			starting = false;
 			return;
@@ -231,7 +262,7 @@
 		if (!files.length) return;
 		let targets = [];
 		try {
-			targets = await commonTargets(files.map((f) => getExt(f.name)));
+			targets = await donutTargets(files.map((f) => getExt(f.name)));
 		} catch (err) {
 			return;
 		}
@@ -261,6 +292,7 @@
 			const replace = attachment && el.querySelector(".fc-replace input").checked;
 			closeDonut();
 			if (attachment) runAttachmentConversion(attachment, t, replace);
+			else if (t === "merge") runMerge(files);
 			else runConversions(files, t);
 		});
 		document.addEventListener("keydown", onKey, true);
@@ -323,7 +355,8 @@
 			if (seg && donut) {
 				const t = seg.dataset.t;
 				closeDonut();
-				runConversions(files, t);
+				if (t === "merge") runMerge(files);
+				else runConversions(files, t);
 			} else {
 				closeDonut();
 				openClickDonut(files, x, y);
@@ -415,6 +448,60 @@
 				`</ul>`;
 		}
 		if (html) frappe.msgprint({ title: __("File Converter"), message: html });
+	}
+
+	/* ---------- merge into one PDF ---------- */
+	async function runMerge(files) {
+		const frm = window.cur_frm;
+		frappe.show_progress(
+			__("Merging {0} files into one PDF", [files.length]),
+			0,
+			1,
+			__("Files are added in the order they were dropped"),
+			true
+		);
+		try {
+			const fd = new FormData();
+			files.forEach((f) => fd.append("files", f, f.name));
+			if (!frm.is_new()) {
+				fd.append("doctype", frm.doctype);
+				fd.append("docname", frm.docname);
+			}
+			const res = await fetch("/api/method/" + API + "merge_pdf", {
+				method: "POST",
+				body: fd,
+				credentials: "same-origin",
+				headers: { "X-Frappe-CSRF-Token": frappe.csrf_token },
+			});
+			const data = await res.json().catch(() => ({}));
+			frappe.hide_progress();
+			if (!res.ok) {
+				frappe.msgprint({
+					title: __("File Converter"),
+					indicator: "red",
+					message: serverError(data, res.status),
+				});
+				return;
+			}
+			const r = data.message;
+			if (r.attached) {
+				frappe.show_alert(
+					{ message: __("Merged PDF attached ({0} files)", [r.files]), indicator: "green" },
+					7
+				);
+				if (!frm.is_new()) frm.reload_doc();
+			} else {
+				frappe.msgprint({
+					title: __("File Converter"),
+					message:
+						`<p>${__("Merged (not attached to this document):")}</p>` +
+						`<a href="${esc(r.file_url)}" target="_blank">${esc(r.file_name)}</a>`,
+				});
+			}
+		} catch (err) {
+			frappe.hide_progress();
+			frappe.msgprint({ title: __("File Converter"), indicator: "red", message: esc(err.message || err) });
+		}
 	}
 
 	/* ---------- convert an existing attachment ---------- */

@@ -99,6 +99,11 @@
 	pointer-events: none;
 }
 
+.fc-seg text.fc-sub {
+	font-size: 11px;
+	font-weight: 600;
+}
+
 .fc-seg:hover path,
 .fc-seg.active path {
 	fill: hsl(var(--fc-h) 70% 38%);
