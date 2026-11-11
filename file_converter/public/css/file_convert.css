@@ -74,7 +74,13 @@
 	cursor: pointer;
 }
 
+/* Frappe's attachment pill is a shrinking flex row; without these the checkbox
+ * collapses to a thin line when the sidebar is narrow or the name is long. */
 .fc-attach-check {
+	flex: 0 0 14px;
+	width: 14px;
+	min-width: 14px;
+	height: 14px;
 	margin: 0 6px 0 0;
 	cursor: pointer;
 }

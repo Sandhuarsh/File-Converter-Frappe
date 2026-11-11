@@ -7,5 +7,5 @@ app_license = "MIT"
 
 # Loaded on every desk page, but ONLY on sites where this app is installed.
 # "?v=" busts browser caches when the files change (bump on each release).
-app_include_js = "/assets/file_converter/js/file_convert.js?v=7"
-app_include_css = "/assets/file_converter/css/file_convert.css?v=7"
+app_include_js = "/assets/file_converter/js/file_convert.js?v=8"
+app_include_css = "/assets/file_converter/css/file_convert.css?v=8"
