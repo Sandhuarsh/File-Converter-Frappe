@@ -72,10 +72,3 @@ green **Merge to 1 PDF** segment. Files are added in the order they were dropped
 A4 page (portrait or landscape to suit the photo, EXIF rotation applied, downscaled to keep the PDF small);
 PDFs are appended page by page. Limits: 30 files, 100 MB total, 300 pages, password-protected PDFs rejected.
 Requires PyMuPDF on the server.
-
-## Merge existing attachments
-
-With two or more image/PDF attachments on a form, each attachment row gets a checkbox. Tick the files (the
-order you tick is the page order); a bar appears under the list with **Merge to 1 PDF** and an optional
-**Replace originals** (off by default; the merged PDF is saved first, and only files the user may delete
-are removed). Server method: `file_converter.api.merge_attachments`.
